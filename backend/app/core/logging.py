@@ -18,7 +18,8 @@ def setup_logging() -> None:
 
     settings = get_settings()
 
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = os.path.join(os.environ.get("TMPDIR") or "/tmp", "logs") if settings.IS_SERVERLESS else LOG_DIR
+    os.makedirs(log_dir, exist_ok=True)
 
     root = logging.getLogger()
     root.setLevel(settings.LOG_LEVEL.upper())
@@ -33,7 +34,7 @@ def setup_logging() -> None:
     root.addHandler(console_handler)
 
     file_handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, "app.log"),
+        os.path.join(log_dir, "app.log"),
         maxBytes=5 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8",
