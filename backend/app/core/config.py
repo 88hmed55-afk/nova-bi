@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUESTS: int = 120
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_env_junk(cls, value: Any) -> Any:
+        """Strip BOM / zero-width characters / surrounding whitespace from env values."""
+        if isinstance(value, str):
+            return value.lstrip("\ufeff\u200b\u200e\u200f").strip()
+        return value
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def _assemble_cors_origins(cls, value: Any) -> Any:
