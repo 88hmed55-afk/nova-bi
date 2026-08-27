@@ -8,13 +8,21 @@ from app.infrastructure.models.base import Base
 
 settings = get_settings()
 
+_engine_kwargs: dict[str, Any] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+if settings.IS_SERVERLESS:
+    from sqlalchemy.pool import NullPool
+
+    _engine_kwargs["poolclass"] = NullPool
+else:
+    _engine_kwargs.update(pool_size=10, max_overflow=20, pool_recycle=1800)
+
 engine = create_engine(
     settings.DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=1800,
     echo=settings.DEBUG,
+    **_engine_kwargs,
 )
 
 SessionLocal = sessionmaker(

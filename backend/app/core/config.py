@@ -1,4 +1,5 @@
 import json
+import os
 from functools import lru_cache
 from typing import Any
 
@@ -88,6 +89,14 @@ class Settings(BaseSettings):
     @property
     def IS_PRODUCTION(self) -> bool:
         return self.ENVIRONMENT.lower() in {"production", "prod"}
+
+    @property
+    def IS_SERVERLESS(self) -> bool:
+        """True when running on a serverless runtime (e.g. Vercel functions)."""
+        override = os.getenv("IS_SERVERLESS")
+        if override is not None:
+            return override.strip().lower() in {"1", "true", "yes"}
+        return os.getenv("VERCEL") == "1"
 
 
 @lru_cache

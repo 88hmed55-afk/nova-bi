@@ -23,11 +23,13 @@ _statistics_updater = StatisticsUpdater()
 async def lifespan(app: FastAPI):
     setup_logging()
     logger.info("%s v%s starting (%s)", settings.APP_NAME, settings.APP_VERSION, settings.ENVIRONMENT)
-    _statistics_updater.start()
+    if not settings.IS_SERVERLESS:
+        _statistics_updater.start()
     try:
         yield
     finally:
-        _statistics_updater.stop()
+        if not settings.IS_SERVERLESS:
+            _statistics_updater.stop()
         engine.dispose()
 
 
