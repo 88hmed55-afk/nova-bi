@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.infrastructure.models.statistics import StatisticSnapshot
@@ -99,7 +100,7 @@ class StatisticsService:
                     metric_key=key,
                     value=value,
                     extra={},
-                )
+)
             )
         self.db.commit()
         return {key: str(value) for key, value in metrics.items()}
@@ -108,9 +109,80 @@ class StatisticsService:
         return self.refresh_for_day(datetime.now(timezone.utc).date())
 
     def refresh_range(self, days: int = 7) -> None:
+        """Recompute daily snapshots for the last `days` days with batched SQL."""
         today = datetime.now(timezone.utc).date()
+        start = datetime.combine(today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc)
+        end = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+
+        def column_map(sql: str) -> Dict[str, Any]:
+            rows = self.db.execute(text(sql), {"start": start, "end": end}).all()
+            return {str(row[0]): row[1] for row in rows}
+
+        revenue = column_map(
+            "SELECT (o.order_date::date)::text AS d, SUM(o.total_amount) AS v "
+            "FROM orders o WHERE o.is_deleted = false AND o.status NOT IN ('cancelled', 'refunded') "
+            "AND o.order_date >= :start AND o.order_date < :end GROUP BY d"
+        )
+        orders = column_map(
+            "SELECT (o.order_date::date)::text AS d, COUNT(*) AS v "
+            "FROM orders o WHERE o.is_deleted = false AND o.status NOT IN ('cancelled', 'refunded') "
+            "AND o.order_date >= :start AND o.order_date < :end GROUP BY d"
+        )
+        new_customers = column_map(
+            "SELECT (created_at::date)::text AS d, COUNT(*) AS v FROM customers "
+            "WHERE is_deleted = false AND created_at >= :start AND created_at < :end GROUP BY d"
+        )
+        products_sold = column_map(
+            "SELECT (o.order_date::date)::text AS d, COALESCE(SUM(oi.quantity), 0) AS v "
+            "FROM order_items oi JOIN orders o ON o.id = oi.order_id "
+            "WHERE o.is_deleted = false AND o.status NOT IN ('cancelled', 'refunded') "
+            "AND o.order_date >= :start AND o.order_date < :end GROUP BY d"
+        )
+        gross_profit = column_map(
+            "SELECT (o.order_date::date)::text AS d, COALESCE(SUM(o.total_amount), 0) "
+            "- COALESCE(SUM(oi.quantity * p.cost_price), 0) AS v "
+            "FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id "
+            "LEFT JOIN products p ON p.id = oi.product_id "
+            "WHERE o.is_deleted = false AND o.status NOT IN ('cancelled', 'refunded') "
+            "AND o.order_date >= :start AND o.order_date < :end GROUP BY d"
+        )
+        payments_received = column_map(
+            "SELECT (paid_at::date)::text AS d, COALESCE(SUM(amount), 0) AS v FROM payments "
+            "WHERE status = 'completed' AND paid_at >= :start AND paid_at < :end GROUP BY d"
+        )
+
+        snapshots: List[StatisticSnapshot] = []
         for offset in range(days - 1, -1, -1):
-            self.refresh_for_day(today - timedelta(days=offset))
+            day = today - timedelta(days=offset)
+            key = day.isoformat()
+            rev = Decimal(str(revenue.get(key, 0) or 0))
+            ord_ = int(orders.get(key, 0) or 0)
+            metrics: Dict[str, Any] = {
+                "revenue": rev,
+                "orders": ord_,
+                "new_customers": int(new_customers.get(key, 0) or 0),
+                "avg_order_value": round(rev / ord_, 2) if ord_ else Decimal("0"),
+                "gross_profit": gross_profit.get(key) or 0,
+                "products_sold": products_sold.get(key) or 0,
+                "payments_received": payments_received.get(key) or 0,
+            }
+            for metric_key, value in metrics.items():
+                snapshots.append(
+                    StatisticSnapshot(
+                        period=day,
+                        metric_key=metric_key,
+                        value=value,
+                        extra={},
+                    )
+                )
+
+        self.db.execute(
+            sa_delete(StatisticSnapshot).where(
+                StatisticSnapshot.period >= start.date(), StatisticSnapshot.period <= today
+            )
+        )
+        self.db.add_all(snapshots)
+        logger.info("Refreshed %d days of statistics snapshots (%d rows).", days, len(snapshots))
 
     def snapshot(self, date_from: date, date_to: date) -> List[Dict[str, Any]]:
         rows = self.db.scalars(

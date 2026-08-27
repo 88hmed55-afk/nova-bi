@@ -226,7 +226,6 @@ def _seed_catalog(db: Session, rng: random.Random) -> tuple[List[Category], List
         )
         categories.append(category)
         db.add(category)
-        db.flush()
         for item_index, name in enumerate(items, start=1):
             sku_counter += 1
             unit_price = Decimal(str(rng.choice((19, 29, 39, 49, 59, 79, 99, 129, 199, 249, 399, 599))))
@@ -427,7 +426,6 @@ def _seed_orders(
         )
         order.items = items
         db.add(order)
-        db.flush()
 
         if payment_status == "paid":
             paid_at = order_date + timedelta(days=rng.randint(0, 2))
@@ -518,7 +516,6 @@ def _seed_inventory(db: Session, products: List[Product], rng: random.Random) ->
             updated_at=_now(0),
         )
         db.add(inventory)
-        db.flush()
         db.add(
             InventoryMovement(
                 id=uuid.uuid4(),
